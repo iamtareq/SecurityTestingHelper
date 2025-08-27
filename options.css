@@ -1,0 +1,10 @@
+body { font: 14px/1.4 system-ui, Segoe UI, Roboto, sans-serif; padding: 16px; }
+h1 { margin: 0 0 12px; }
+h2 { margin: 16px 0 8px; }
+.row { display: flex; gap: 8px; margin-bottom: 12px; }
+input[type="url"] { flex: 1; padding: 8px; }
+button { padding: 8px 12px; }
+.table { width: 100%; border-collapse: collapse; }
+.table th, .table td { border-bottom: 1px solid #ddd; padding: 6px; text-align: left; }
+.badge { background:#eee; padding:2px 6px; border-radius: 6px; }
+#status { margin-top: 10px; color: #0a7; }

@@ -1,0 +1,57 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="popup.css" />
+  <title>Security Testing Helper</title>
+</head>
+<body>
+  <div id="app">
+    <header>
+      <img src="assets/icons/icon32.png" alt="icon" />
+      <h1>Security Testing Helper</h1>
+    </header>
+
+    <!-- Allowlist Controls -->
+    <section id="allowbox">
+      <label class="lbl">URL</label>
+      <input id="allowInput" type="url" placeholder="https://example.com" />
+      <button id="useCurrent" title="Use current tab origin">Use current</button>
+      <label class="switch" title="Enable scanning for this URL origin">
+        <input type="checkbox" id="allowToggle">
+        <span class="slider"></span>
+      </label>
+      <span id="allowStatus" class="status">Disabled</span>
+    </section>
+
+    <nav class="tabs">
+      <button data-tab="dashboard" class="active">Dashboard</button>
+      <button data-tab="xss">XSS Scanner</button>
+      <button data-tab="csrf">CSRF</button>
+      <button data-tab="cookies">Cookies</button>
+      <button data-tab="ssl">SSL/HTTPS</button>
+      <button data-tab="headers">Headers</button>
+    </nav>
+
+    <section id="dashboard" class="tab active">
+      <div class="score"><span id="score">--</span></div>
+      <div class="controls">
+        <button id="runAll" disabled>Run All Tests</button>
+        <button id="exportJson">Export JSON</button>
+        <button id="exportCsv">Export CSV</button>
+      </div>
+      <div id="summary"></div>
+      <div id="lastScan"></div>
+    </section>
+
+    <section id="xss" class="tab"><div id="xssResults" class="results"></div></section>
+    <section id="csrf" class="tab"><div id="csrfResults" class="results"></div></section>
+    <section id="cookies" class="tab"><div id="cookieResults" class="results"></div></section>
+    <section id="ssl" class="tab"><div id="sslResults" class="results"></div></section>
+    <section id="headers" class="tab"><div id="headerResults" class="results"></div></section>
+  </div>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

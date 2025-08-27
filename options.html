@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'" />
+  <title>Security Testing Helper — Options</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <main>
+    <h1>Security Testing Helper — Options</h1>
+
+    <section>
+      <h2>Allowlist (enabled origins)</h2>
+      <div class="row">
+        <input id="originInput" type="url" placeholder="https://example.com" />
+        <button id="addBtn">Add</button>
+      </div>
+      <table id="list" class="table">
+        <thead><tr><th>Origin</th><th>Actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Exports</h2>
+      <button id="exportAllowlist">Export allowlist (JSON)</button>
+      <input id="importFile" type="file" accept="application/json" />
+      <button id="importAllowlist">Import</button>
+    </section>
+
+    <div id="status"></div>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>
