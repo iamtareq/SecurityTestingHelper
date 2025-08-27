@@ -112,13 +112,18 @@ async function runAll() {
   const content = await chrome.tabs.sendMessage(tab.id, { type: 'RUN_CONTENT_SCANS' }).catch(() => null);
   const hdr     = await chrome.runtime.sendMessage({ type: 'GET_HEADERS', tabId: tab.id }).catch(() => null);
   const cks     = await chrome.runtime.sendMessage({ type: 'GET_COOKIES', url: tab.url }).catch(() => null);
+  const tls     = await chrome.runtime.sendMessage({ type: 'ANALYZE_TLS', url: tab.url }).catch(() => null);
 
   const findings = {
-    xss:     content?.ok ? content.data.xss   : { inline:[], jsHrefs:[], suspiciousReflections:[] },
+    xss:     content?.ok ? content.data.xss   : { inline:[], jsHrefs:[], suspiciousReflections:[], enhanced: {}, sqlInjection: [] },
     csrf:    content?.ok ? content.data.csrf  : { forms:[] },
     mixed:   content?.ok ? content.data.mixed : { items:[], isSecureContext:false },
-    headers: hdr?.analysis ?? { present:[], missing:[], notes:[], hstsOk:false },
+    jwt:     content?.ok ? content.data.jwt   : { pageTokens:[], localStorage:[], sessionStorage:[], totalFound:0 },
+    oauth:   content?.ok ? content.data.oauth : { foundParams:[], totalFound:0, inUrl:false, inHash:false },
+    session: content?.ok ? content.data.session : { cookieCount:0, sessionStorageKeys:0, localStorageKeys:0, issues:[] },
+    headers: hdr?.analysis ?? { present:[], missing:[], notes:[], corsIssues:[], hstsOk:false },
     cookies: cks?.analysis ?? { count:0, issues:[] },
+    tls:     tls?.tls ?? { isHttps:false, certificateErrors:[] },
     _raw:    { cookies: cks?.cookies ?? [], headers: hdr?.headers ?? {}, url: tab.url },
     meta:    { ts: new Date().toISOString(), url: tab.url }
   };
@@ -145,7 +150,12 @@ async function runAll() {
     ['Cookie Issues', findings.cookies.issues.length],
     ['Mixed Content', findings.mixed.items.length],
     ['XSS Hints', findings.xss.inline.length + findings.xss.jsHrefs.length + findings.xss.suspiciousReflections.length],
-    ['Forms Analyzed', findings.csrf.forms.length]
+    ['SQL Injection', findings.xss.sqlInjection ? findings.xss.sqlInjection.length : 0],
+    ['Forms Analyzed', findings.csrf.forms.length],
+    ['JWT Tokens Found', findings.jwt.totalFound],
+    ['OAuth Parameters', findings.oauth.totalFound],
+    ['Session Issues', findings.session.issues.length],
+    ['CORS Issues', findings.headers.corsIssues ? findings.headers.corsIssues.length : 0]
   ];
   
   summaryItems.forEach(([label, value]) => {
@@ -164,6 +174,36 @@ async function runAll() {
   renderList(xr, 'Inline event handlers', findings.xss.inline, (n) => `<div class="item"><div><span class="tag">${SecurityUtils.escaping.escapeHtml(n.tag)}</span> <span class="mono">${SecurityUtils.escaping.escapeHtml(n.handlers.join(', '))}</span></div><div class="mono">${SecurityUtils.escaping.escapeHtml(n.snippet)}</div></div>`);
   renderList(xr, 'javascript: links', findings.xss.jsHrefs, (a) => `<div class="item"><span class="tag">${SecurityUtils.escaping.escapeHtml(a.tag)}</span> <span class="mono">${SecurityUtils.escaping.escapeHtml(a.href)}</span></div>`);
   renderList(xr, 'Suspicious reflections', findings.xss.suspiciousReflections, (r) => `<div class="item">Param <b>${SecurityUtils.escaping.escapeHtml(r.key)}</b> reflected near script context <span class="mono">${SecurityUtils.escaping.escapeHtml(r.valueSample)}</span></div>`);
+  
+  // Enhanced XSS findings
+  if (findings.xss.enhanced && findings.xss.enhanced.reflectedParams && findings.xss.enhanced.reflectedParams.length > 0) {
+    const enhancedDiv = SecurityUtils.escaping.createSafeElement('div', { class: 'item' });
+    const titleDiv = SecurityUtils.escaping.createSafeElement('h4', {}, 'Enhanced XSS Analysis');
+    enhancedDiv.appendChild(titleDiv);
+    
+    findings.xss.enhanced.reflectedParams.forEach(param => {
+      const riskClass = param.riskLevel === 'HIGH' ? 'bad' : param.riskLevel === 'MEDIUM' ? 'warn' : 'ok';
+      const paramDiv = SecurityUtils.escaping.createSafeElement('div', { class: riskClass });
+      paramDiv.innerHTML = `Parameter <b>${SecurityUtils.escaping.escapeHtml(param.parameter)}</b> reflected in ${param.contexts.join(', ')} context(s) - Risk: ${param.riskLevel}`;
+      enhancedDiv.appendChild(paramDiv);
+    });
+    
+    if (findings.xss.enhanced.riskScore > 0) {
+      const scoreDiv = SecurityUtils.escaping.createSafeElement('div', { class: 'warn' });
+      scoreDiv.textContent = `XSS Risk Score: ${findings.xss.enhanced.riskScore}/100`;
+      enhancedDiv.appendChild(scoreDiv);
+    }
+    
+    xr.appendChild(enhancedDiv);
+  }
+  
+  // SQL Injection findings
+  if (findings.xss.sqlInjection && findings.xss.sqlInjection.length > 0) {
+    renderList(xr, 'SQL Injection Patterns Detected', findings.xss.sqlInjection, (sql) => {
+      const patterns = sql.patterns.map(p => `Pattern: ${SecurityUtils.escaping.escapeHtml(p.pattern)}`).join('<br>');
+      return `<div class="item bad"><div><b>${SecurityUtils.escaping.escapeHtml(sql.element)}</b> ${sql.name ? '(' + SecurityUtils.escaping.escapeHtml(sql.name) + ')' : ''}</div><div class="mono">${patterns}</div></div>`;
+    });
+  }
 
   // CSRF tab - clear safely
   const cr = $('#csrfResults'); 
@@ -289,7 +329,139 @@ async function runAll() {
     headerItemDiv.appendChild(noteDiv);
   });
   
+  // CORS issues
+  if (findings.headers.corsIssues && findings.headers.corsIssues.length > 0) {
+    const corsTitle = SecurityUtils.escaping.createSafeElement('h4', {}, 'CORS Policy Issues');
+    headerItemDiv.appendChild(corsTitle);
+    
+    findings.headers.corsIssues.forEach(issue => {
+      const severityClass = issue.severity === 'HIGH' ? 'bad' : 
+                           issue.severity === 'MEDIUM' ? 'warn' : 'ok';
+      const corsDiv = SecurityUtils.escaping.createSafeElement('div', { class: severityClass },
+        `• ${issue.issue} (${issue.severity})`);
+      headerItemDiv.appendChild(corsDiv);
+    });
+  }
+  
   hr.appendChild(headerItemDiv);
+
+  // Auth/Session tab - safe creation
+  const ar = $('#authResults');
+  ar.textContent = '';
+  
+  const authItemDiv = SecurityUtils.escaping.createSafeElement('div', { class: 'item' });
+  
+  // JWT Token Analysis
+  const jwtTitle = SecurityUtils.escaping.createSafeElement('h4', {}, 'JWT Token Analysis');
+  authItemDiv.appendChild(jwtTitle);
+  
+  if (findings.jwt.totalFound > 0) {
+    const jwtSummary = SecurityUtils.escaping.createSafeElement('div', { class: 'warn' },
+      `Found ${findings.jwt.totalFound} JWT token(s) - potential exposure risk`);
+    authItemDiv.appendChild(jwtSummary);
+    
+    if (findings.jwt.pageTokens.length > 0) {
+      const pageDiv = SecurityUtils.escaping.createSafeElement('div', { class: 'warn' },
+        `• ${findings.jwt.pageTokens.length} token(s) in page content`);
+      authItemDiv.appendChild(pageDiv);
+    }
+    
+    if (findings.jwt.localStorage.length > 0) {
+      const localDiv = SecurityUtils.escaping.createSafeElement('div', { class: 'warn' },
+        `• ${findings.jwt.localStorage.length} token(s) in localStorage`);
+      authItemDiv.appendChild(localDiv);
+    }
+    
+    if (findings.jwt.sessionStorage.length > 0) {
+      const sessionDiv = SecurityUtils.escaping.createSafeElement('div', { class: 'warn' },
+        `• ${findings.jwt.sessionStorage.length} token(s) in sessionStorage`);
+      authItemDiv.appendChild(sessionDiv);
+    }
+  } else {
+    const noJwt = SecurityUtils.escaping.createSafeElement('div', { class: 'ok' },
+      'No JWT tokens detected');
+    authItemDiv.appendChild(noJwt);
+  }
+  
+  // OAuth Flow Analysis
+  const oauthTitle = SecurityUtils.escaping.createSafeElement('h4', {}, 'OAuth Flow Security');
+  authItemDiv.appendChild(oauthTitle);
+  
+  if (findings.oauth.totalFound > 0) {
+    const oauthWarning = SecurityUtils.escaping.createSafeElement('div', { class: 'bad' },
+      `Found ${findings.oauth.totalFound} OAuth parameter(s) in URL - sensitive data exposure!`);
+    authItemDiv.appendChild(oauthWarning);
+    
+    findings.oauth.foundParams.forEach(param => {
+      const paramDiv = SecurityUtils.escaping.createSafeElement('div', { class: 'bad' },
+        `• ${param.parameter} in ${param.location} (${param.length} chars)`);
+      authItemDiv.appendChild(paramDiv);
+    });
+  } else {
+    const noOauth = SecurityUtils.escaping.createSafeElement('div', { class: 'ok' },
+      'No OAuth parameters detected in URL');
+    authItemDiv.appendChild(noOauth);
+  }
+  
+  // Session Management Analysis
+  const sessionTitle = SecurityUtils.escaping.createSafeElement('h4', {}, 'Session Management');
+  authItemDiv.appendChild(sessionTitle);
+  
+  const sessionInfo = SecurityUtils.escaping.createSafeElement('div', {},
+    `Cookies: ${findings.session.cookieCount}, localStorage keys: ${findings.session.localStorageKeys}, sessionStorage keys: ${findings.session.sessionStorageKeys}`);
+  authItemDiv.appendChild(sessionInfo);
+  
+  if (findings.session.issues.length > 0) {
+    findings.session.issues.forEach(issue => {
+      const severityClass = issue.type === 'localStorage' ? 'warn' : 'bad';
+      const issueDiv = SecurityUtils.escaping.createSafeElement('div', { class: severityClass },
+        `• ${issue.issue} (${issue.key || issue.type})`);
+      authItemDiv.appendChild(issueDiv);
+    });
+  } else {
+    const noSessionIssues = SecurityUtils.escaping.createSafeElement('div', { class: 'ok' },
+      'No obvious session management issues detected');
+    authItemDiv.appendChild(noSessionIssues);
+  }
+  
+  ar.appendChild(authItemDiv);
+
+  // Advanced tab - safe creation
+  const advr = $('#advancedResults');
+  advr.textContent = '';
+  
+  const advItemDiv = SecurityUtils.escaping.createSafeElement('div', { class: 'item' });
+  
+  // TLS/Certificate Analysis
+  const tlsTitle = SecurityUtils.escaping.createSafeElement('h4', {}, 'TLS/Certificate Analysis');
+  advItemDiv.appendChild(tlsTitle);
+  
+  const httpsStatus = SecurityUtils.escaping.createSafeElement('div', { 
+    class: findings.tls.isHttps ? 'ok' : 'bad'
+  }, `HTTPS: ${findings.tls.isHttps ? 'Enabled' : 'Not enabled'}`);
+  advItemDiv.appendChild(httpsStatus);
+  
+  if (findings.tls.certificateErrors && findings.tls.certificateErrors.length > 0) {
+    findings.tls.certificateErrors.forEach(error => {
+      const errorClass = error.severity === 'HIGH' ? 'bad' : 'warn';
+      const errorDiv = SecurityUtils.escaping.createSafeElement('div', { class: errorClass },
+        `• ${error.message} (${error.type})`);
+      advItemDiv.appendChild(errorDiv);
+    });
+  }
+  
+  // Enhanced HSTS Analysis
+  if (findings.tls.isHttps) {
+    const hstsAdvanced = SecurityUtils.escaping.createSafeElement('div', {},
+      `HSTS: ${findings.headers.hstsOk ? 'Present' : 'Missing'}, Subdomains: ${findings.headers.hstsSubdomains ? 'Yes' : 'No'}, Preload: ${findings.headers.hstsPreload ? 'Yes' : 'No'}`);
+    advItemDiv.appendChild(hstsAdvanced);
+  }
+  
+  const tlsNote = SecurityUtils.escaping.createSafeElement('small', { class: 'muted' },
+    'Note: Detailed certificate chain, TLS version, and cipher analysis require external tools or APIs');
+  advItemDiv.appendChild(tlsNote);
+  
+  advr.appendChild(advItemDiv);
 
   // Export with permission request
   $('#exportJson').onclick = async () => { 

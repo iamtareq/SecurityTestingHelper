@@ -20,7 +20,41 @@
       }
     });
 
-    return { inline, jsHrefs, suspiciousReflections };
+    // Enhanced XSS detection
+    const enhanced = H.enhancedXssDetection();
+    
+    // SQL injection detection in forms and URLs
+    const sqlInjectionFindings = [];
+    const forms = document.querySelectorAll('form input[type="text"], form input[type="search"], form textarea');
+    forms.forEach(input => {
+      if (input.value) {
+        const sqlCheck = H.scanForSqlInjection(input.value);
+        if (sqlCheck.found) {
+          sqlInjectionFindings.push({
+            element: input.tagName.toLowerCase(),
+            name: input.name || input.id,
+            patterns: sqlCheck.patterns
+          });
+        }
+      }
+    });
+    
+    // Check URL for SQL injection patterns
+    const urlSqlCheck = H.scanForSqlInjection(location.href);
+    if (urlSqlCheck.found) {
+      sqlInjectionFindings.push({
+        element: 'url',
+        patterns: urlSqlCheck.patterns
+      });
+    }
+
+    return { 
+      inline, 
+      jsHrefs, 
+      suspiciousReflections,
+      enhanced,
+      sqlInjection: sqlInjectionFindings
+    };
   };
 
   const csrfScan = () => {
@@ -45,7 +79,20 @@
     const xss = passiveXssScan();
     const csrf = csrfScan();
     const mixed = mixedContentScan();
-    return { xss, csrf, mixed };
+    
+    // Add new security scans
+    const jwtTokens = H.detectJwtTokens();
+    const oauthFlows = H.detectOauthFlows(); 
+    const sessionMgmt = H.analyzeSessionManagement();
+    
+    return { 
+      xss, 
+      csrf, 
+      mixed, 
+      jwt: jwtTokens,
+      oauth: oauthFlows,
+      session: sessionMgmt
+    };
   };
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {

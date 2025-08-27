@@ -15,16 +15,33 @@ const normalizeHeaders = (headers = []) => {
 const analyzeSecurityHeaders = (hmap = {}) => {
   const present = [];
   const missing = [];
-  const want = [
+  const comprehensive = [
     "content-security-policy",
     "x-frame-options",
     "x-content-type-options",
     "strict-transport-security",
     "referrer-policy",
-    "permissions-policy"
+    "permissions-policy",
+    "access-control-allow-origin",
+    "access-control-allow-credentials", 
+    "access-control-expose-headers",
+    "access-control-max-age",
+    "cross-origin-embedder-policy",
+    "cross-origin-opener-policy", 
+    "cross-origin-resource-policy",
+    "expect-ct",
+    "x-xss-protection"
   ];
-  want.forEach(k => { if (hmap[k]) present.push({ name:k, value:hmap[k] }); else missing.push(k); });
+  
+  comprehensive.forEach(k => { 
+    if (hmap[k]) present.push({ name: k, value: hmap[k] }); 
+    else missing.push(k); 
+  });
+  
   const notes = [];
+  const corsIssues = [];
+  
+  // Enhanced header validation
   if (hmap["x-content-type-options"] && hmap["x-content-type-options"].toLowerCase() !== "nosniff") {
     notes.push({ name: "x-content-type-options", issue: "Should be 'nosniff'" });
   }
@@ -34,20 +51,129 @@ const analyzeSecurityHeaders = (hmap = {}) => {
   if (hmap["content-security-policy"] && /unsafe-inline|unsafe-eval/i.test(hmap["content-security-policy"])) {
     notes.push({ name: "content-security-policy", issue: "Avoid 'unsafe-inline'/'unsafe-eval' if possible" });
   }
+  
+  // CORS analysis
+  const acao = hmap["access-control-allow-origin"];
+  const acac = hmap["access-control-allow-credentials"];
+  
+  if (acao === "*" && acac === "true") {
+    corsIssues.push({
+      severity: "HIGH",
+      issue: "Dangerous CORS config: wildcard origin with credentials allowed"
+    });
+  }
+  if (acao === "*") {
+    corsIssues.push({
+      severity: "MEDIUM", 
+      issue: "CORS allows any origin - review if appropriate"
+    });
+  }
+  if (acac === "true" && !acao) {
+    corsIssues.push({
+      severity: "LOW",
+      issue: "Credentials allowed but no ACAO header set"
+    });
+  }
+  
+  // Additional security header checks
+  if (hmap["x-xss-protection"] && hmap["x-xss-protection"] !== "0") {
+    notes.push({ name: "x-xss-protection", issue: "Consider setting to '0' as it can introduce vulnerabilities" });
+  }
+  
+  if (hmap["expect-ct"] && !/enforce/i.test(hmap["expect-ct"])) {
+    notes.push({ name: "expect-ct", issue: "Consider using 'enforce' directive for better security" });
+  }
+  
   const hsts = hmap["strict-transport-security"] || "";
   const hstsOk = /max-age=\d+/.test(hsts);
-  return { present, missing, notes, hstsOk, raw: hmap };
+  const hstsSubdomains = /includeSubDomains/i.test(hsts);
+  const hstsPreload = /preload/i.test(hsts);
+  
+  return { 
+    present, 
+    missing, 
+    notes, 
+    corsIssues,
+    hstsOk, 
+    hstsSubdomains,
+    hstsPreload,
+    raw: hmap 
+  };
 };
 
-const scoreFromFindings = ({ headers = {}, cookies = {}, xss = {}, csrf = {}, mixed = {} }) => {
+const scoreFromFindings = ({ headers = {}, cookies = {}, xss = {}, csrf = {}, mixed = {}, jwt = {}, oauth = {}, session = {} }) => {
   let score = 100;
   const missCount = (headers.missing || []).length;
-  score -= Math.min(40, missCount * 6);
+  score -= Math.min(40, missCount * 3); // Reduced per-header penalty since we check more headers now
   score -= Math.min(25, (cookies.issues || []).length * 3);
+  
+  // Enhanced XSS scoring
+  if (xss.enhanced && xss.enhanced.riskScore) {
+    score -= Math.min(20, xss.enhanced.riskScore * 0.2);
+  }
   if (xss.vulnerableCount) score -= Math.min(15, xss.vulnerableCount * 5);
+  if (xss.sqlInjection && xss.sqlInjection.length) score -= Math.min(15, xss.sqlInjection.length * 8);
+  
   if (csrf.issues && csrf.issues.length) score -= Math.min(10, csrf.issues.length * 3);
   if (mixed.items && mixed.items.length) score -= Math.min(10, mixed.items.length * 2);
+  
+  // New scoring factors
+  if (jwt.totalFound > 0) score -= Math.min(10, jwt.totalFound * 3); // JWT exposure risk
+  if (oauth.totalFound > 0) score -= Math.min(15, oauth.totalFound * 5); // OAuth param exposure
+  if (session.issues && session.issues.length) score -= Math.min(10, session.issues.length * 4);
+  
+  // CORS issues
+  if (headers.corsIssues && headers.corsIssues.length) {
+    const corsDeduction = headers.corsIssues.reduce((acc, issue) => {
+      return acc + (issue.severity === 'HIGH' ? 15 : issue.severity === 'MEDIUM' ? 10 : 5);
+    }, 0);
+    score -= Math.min(20, corsDeduction);
+  }
+  
   return Math.max(0, Math.round(score));
+};
+
+const analyzeTlsInfo = (url) => {
+  const tlsInfo = {
+    isHttps: false,
+    protocol: null,
+    certificateInfo: null,
+    mixedContentRisk: false,
+    tlsVersion: null,
+    weakCiphers: false,
+    certificateErrors: []
+  };
+  
+  try {
+    const urlObj = new URL(url);
+    tlsInfo.isHttps = urlObj.protocol === 'https:';
+    tlsInfo.protocol = urlObj.protocol;
+    
+    // Note: Full TLS/certificate details require webRequest or external scanning
+    // This provides basic analysis based on URL and available browser APIs
+    
+    if (!tlsInfo.isHttps) {
+      tlsInfo.certificateErrors.push({
+        type: 'protocol',
+        severity: 'HIGH',
+        message: 'Site not using HTTPS - all communication unencrypted'
+      });
+    }
+    
+    // Check for mixed content risk indicators  
+    if (tlsInfo.isHttps) {
+      tlsInfo.mixedContentRisk = true; // Will be refined by mixed content scan
+    }
+    
+  } catch (e) {
+    tlsInfo.certificateErrors.push({
+      type: 'url_parse',
+      severity: 'MEDIUM', 
+      message: 'Unable to parse URL for TLS analysis'
+    });
+  }
+  
+  return tlsInfo;
 };
 
 /* ===================== ADDED: allowlist state ===================== */
@@ -216,6 +342,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (msg.type === "CLEANUP_STORAGE") {
         const cleaned = await SecurityUtils.storage.cleanup();
         return sendResponse({ ok: true, cleaned });
+      }
+
+      if (msg.type === "ANALYZE_TLS") {
+        const tlsAnalysis = analyzeTlsInfo(msg.url);
+        return sendResponse({ ok: true, tls: tlsAnalysis });
       }
 
     } catch (e) {
