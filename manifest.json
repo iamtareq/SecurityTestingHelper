@@ -21,13 +21,15 @@
   "permissions": [
     "activeTab",
     "storage",
-    "cookies",
     "scripting",
-    "tabs",
+    "alarms"
+  ],
+  "optional_permissions": [
+    "cookies",
     "webRequest",
     "downloads"
   ],
-  "host_permissions": [
+  "optional_host_permissions": [
     "<all_urls>"
   ],
   "background": {
@@ -47,7 +49,7 @@
     }
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'"
+    "extension_pages": "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
   },
   "minimum_chrome_version": "116"
 }
