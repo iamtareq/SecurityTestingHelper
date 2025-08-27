@@ -109,6 +109,20 @@ async function runAll() {
     $('#summary').appendChild(messageDiv);
     return;
   }
+
+  // Check if webRequest permission is needed for header analysis
+  const hasWebRequestPermission = await SecurityUtils.permissions.hasPermission('webRequest', '<all_urls>');
+  if (!hasWebRequestPermission) {
+    const userWantsHeaders = confirm('To analyze security headers, this extension needs permission to access web request data. Grant permission now?');
+    if (userWantsHeaders) {
+      const granted = await SecurityUtils.permissions.requestPermissionIfNeeded('webRequest', '<all_urls>');
+      if (granted) {
+        // Reinitialize the webRequest listener in the background
+        await chrome.runtime.sendMessage({ type: 'INIT_WEBREQUEST_LISTENER' });
+      }
+    }
+  }
+
   const content = await chrome.tabs.sendMessage(tab.id, { type: 'RUN_CONTENT_SCANS' }).catch(() => null);
   const hdr     = await chrome.runtime.sendMessage({ type: 'GET_HEADERS', tabId: tab.id }).catch(() => null);
   const cks     = await chrome.runtime.sendMessage({ type: 'GET_COOKIES', url: tab.url }).catch(() => null);
