@@ -231,10 +231,11 @@ async function getCookiesForUrl(url) {
   // Check allowlist and request permissions dynamically
   if (!isAllowed(url)) return [];
   
-  // Request cookie permissions dynamically
-  const hasPermission = await SecurityUtils.permissions.requestCookiePermissions(url);
+  // Check cookie permissions (don't request from service worker)
+  const origin = new URL(url).origin;
+  const hasPermission = await SecurityUtils.permissions.hasPermission('cookies', origin + '/*');
   if (!hasPermission) {
-    console.warn('Cookie permission denied for:', url);
+    console.warn('Cookie permission not granted for:', url);
     return [];
   }
   
@@ -335,8 +336,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
 
       if (msg.type === "REQUEST_DOWNLOAD_PERMISSION") {
-        const hasPermission = await SecurityUtils.permissions.requestDownloadPermissions();
-        return sendResponse({ ok: true, granted: hasPermission });
+        // Service workers cannot request permissions - this should be handled by popup
+        console.warn('Download permission requests should be handled by popup, not service worker');
+        return sendResponse({ ok: false, error: 'Permission requests not supported in service worker' });
       }
 
       if (msg.type === "INIT_WEBREQUEST_LISTENER") {

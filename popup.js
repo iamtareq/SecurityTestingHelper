@@ -123,6 +123,16 @@ async function runAll() {
     }
   }
 
+  // Check if cookie permission is needed for cookie analysis
+  const origin = new URL(tab.url).origin;
+  const hasCookiePermission = await SecurityUtils.permissions.hasPermission('cookies', origin + '/*');
+  if (!hasCookiePermission) {
+    const userWantsCookies = confirm('To analyze cookies, this extension needs permission to access cookies for this site. Grant permission now?');
+    if (userWantsCookies) {
+      await SecurityUtils.permissions.requestPermissionIfNeeded('cookies', origin + '/*');
+    }
+  }
+
   const content = await chrome.tabs.sendMessage(tab.id, { type: 'RUN_CONTENT_SCANS' }).catch(() => null);
   const hdr     = await chrome.runtime.sendMessage({ type: 'GET_HEADERS', tabId: tab.id }).catch(() => null);
   const cks     = await chrome.runtime.sendMessage({ type: 'GET_COOKIES', url: tab.url }).catch(() => null);
@@ -515,6 +525,6 @@ document.getElementById('runAll').addEventListener('click', runAll);
 // Init
 (async () => {
   const tab = await getActiveTab(); await syncAllowUI(tab);
-  const set = await getAllowlist(); const currentOrigin = new URL(tab.url).origin;
-  if (set.has(currentOrigin)) runAll();
+  // Note: runAll() is only called on explicit user action (button click)
+  // to ensure permission requests have proper user gesture context
 })();
