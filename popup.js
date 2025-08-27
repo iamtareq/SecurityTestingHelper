@@ -239,7 +239,7 @@ async function runAll() {
     Size: c.size 
   }));
   
-  const itemDiv = SecurityUtils.escaping.createSafeElement('div', { class: 'item' });
+  const cookiesItemDiv = SecurityUtils.escaping.createSafeElement('div', { class: 'item' });
   
   // Create table safely
   const table = SecurityUtils.dom.createTable(['Name', 'Domain', 'Flags', 'SameSite', 'Session', 'Size'], 
@@ -253,7 +253,7 @@ async function runAll() {
     }))
   );
   
-  itemDiv.appendChild(table);
+  cookiesItemDiv.appendChild(table);
   
   // Add cookie issues safely
   const issuesDiv = SecurityUtils.escaping.createSafeElement('div', { class: 'item' });
@@ -271,8 +271,8 @@ async function runAll() {
     issuesDiv.appendChild(noIssues);
   }
   
-  itemDiv.appendChild(issuesDiv);
-  ck.appendChild(itemDiv);
+  cookiesItemDiv.appendChild(issuesDiv);
+  ck.appendChild(cookiesItemDiv);
 
   // SSL/HTTPS tab - safe creation
   const sr = $('#sslResults');
@@ -292,9 +292,9 @@ async function runAll() {
   
   // Mixed content items (up to 10)
   (findings.mixed.items || []).slice(0, 10).forEach(item => {
-    const itemDiv = SecurityUtils.escaping.createSafeElement('div', { class: 'warn mono' },
+    const mixedContentItemDiv = SecurityUtils.escaping.createSafeElement('div', { class: 'warn mono' },
       `• ${item.tag}[${item.attr}] → ${item.url}`);
-    sslItemDiv.appendChild(itemDiv);
+    sslItemDiv.appendChild(mixedContentItemDiv);
   });
   
   // HSTS status
