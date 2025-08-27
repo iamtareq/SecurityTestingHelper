@@ -202,7 +202,7 @@ const tabHeaders = new Map();
 
 // Initialize webRequest listener with permission check
 async function initWebRequestListener() {
-  const hasPermission = await SecurityUtils.permissions.requestWebRequestPermissions();
+  const hasPermission = await SecurityUtils.permissions.hasWebRequestPermissions();
   if (!hasPermission) {
     console.warn('WebRequest permission not granted - header capture disabled');
     return;
@@ -337,6 +337,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (msg.type === "REQUEST_DOWNLOAD_PERMISSION") {
         const hasPermission = await SecurityUtils.permissions.requestDownloadPermissions();
         return sendResponse({ ok: true, granted: hasPermission });
+      }
+
+      if (msg.type === "INIT_WEBREQUEST_LISTENER") {
+        await initWebRequestListener();
+        return sendResponse({ ok: true });
       }
 
       if (msg.type === "CLEANUP_STORAGE") {

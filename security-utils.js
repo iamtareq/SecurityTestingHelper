@@ -70,13 +70,21 @@ const SecurityUtils = {
 
   // Permission management utilities
   permissions: {
-    async requestPermissionIfNeeded(permission, hostPermission = null) {
+    async hasPermission(permission, hostPermission = null) {
       try {
-        const hasPermission = await chrome.permissions.contains({
+        return await chrome.permissions.contains({
           permissions: [permission],
           ...(hostPermission ? { origins: [hostPermission] } : {})
         });
+      } catch (error) {
+        console.error('Permission check failed:', error);
+        return false;
+      }
+    },
 
+    async requestPermissionIfNeeded(permission, hostPermission = null) {
+      try {
+        const hasPermission = await this.hasPermission(permission, hostPermission);
         if (hasPermission) return true;
 
         return await chrome.permissions.request({
@@ -101,6 +109,10 @@ const SecurityUtils = {
 
     async requestWebRequestPermissions() {
       return await this.requestPermissionIfNeeded('webRequest', '<all_urls>');
+    },
+
+    async hasWebRequestPermissions() {
+      return await this.hasPermission('webRequest', '<all_urls>');
     },
 
     async requestDownloadPermissions() {
