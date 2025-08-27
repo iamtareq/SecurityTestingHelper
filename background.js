@@ -1,4 +1,7 @@
 // Self-contained MV3 service worker (no imports), FLAT layout version
+// Import security utilities
+importScripts('security-utils.js');
+
 // Utility functions that used to live in security-analyzer.js:
 const normalizeHeaders = (headers = []) => {
   const out = {};
@@ -70,36 +73,62 @@ function isAllowed(url) {
 
 // Capture latest response headers per tab (only if allowed)
 const tabHeaders = new Map();
-chrome.webRequest.onHeadersReceived.addListener(
-  (details) => {
-    if (details.tabId >= 0 && isAllowed(details.url)) { // <-- gated
-      tabHeaders.set(details.tabId, {
-        url: details.url,
-        time: Date.now(),
-        headers: details.responseHeaders || [],
-        statusLine: details.statusLine || ""
-      });
-    }
-  },
-  { urls: ["<all_urls>"] },
-  ["responseHeaders", "extraHeaders"]
-);
+
+// Initialize webRequest listener with permission check
+async function initWebRequestListener() {
+  const hasPermission = await SecurityUtils.permissions.requestWebRequestPermissions();
+  if (!hasPermission) {
+    console.warn('WebRequest permission not granted - header capture disabled');
+    return;
+  }
+
+  chrome.webRequest.onHeadersReceived.addListener(
+    (details) => {
+      if (details.tabId >= 0 && isAllowed(details.url)) { // <-- gated
+        tabHeaders.set(details.tabId, {
+          url: details.url,
+          time: Date.now(),
+          headers: details.responseHeaders || [],
+          statusLine: details.statusLine || ""
+        });
+      }
+    },
+    { urls: ["<all_urls>"] },
+    ["responseHeaders", "extraHeaders"]
+  );
+}
+
+// Initialize on startup
+initWebRequestListener();
 
 async function getCookiesForUrl(url) {
-  // <-- gated by allowlist
+  // Check allowlist and request permissions dynamically
   if (!isAllowed(url)) return [];
-  const all = await chrome.cookies.getAll({ url });
-  return all.map(c => ({
-    name: c.name,
-    domain: c.domain,
-    path: c.path,
-    secure: !!c.secure,
-    httpOnly: !!c.httpOnly,
-    sameSite: c.sameSite || "unspecified",
-    session: !!c.session,
-    expirationDate: c.expirationDate || null,
-    size: (c.value || "").length
-  }));
+  
+  // Request cookie permissions dynamically
+  const hasPermission = await SecurityUtils.permissions.requestCookiePermissions(url);
+  if (!hasPermission) {
+    console.warn('Cookie permission denied for:', url);
+    return [];
+  }
+  
+  try {
+    const all = await chrome.cookies.getAll({ url });
+    return all.map(c => ({
+      name: c.name,
+      domain: c.domain,
+      path: c.path,
+      secure: !!c.secure,
+      httpOnly: !!c.httpOnly,
+      sameSite: c.sameSite || "unspecified",
+      session: !!c.session,
+      expirationDate: c.expirationDate || null,
+      size: (c.value || "").length
+    }));
+  } catch (error) {
+    console.error('Failed to get cookies:', error);
+    return [];
+  }
 }
 
 function analyzeCookies(list = []) {
@@ -118,7 +147,22 @@ function analyzeCookies(list = []) {
   return { count: list.length, issues };
 }
 
-chrome.runtime.onInstalled.addListener(() => console.log("Security Testing Helper installed"));
+chrome.runtime.onInstalled.addListener(async () => {
+  console.log("Security Testing Helper installed");
+  
+  // Schedule periodic cleanup
+  chrome.alarms.create('cleanup-storage', { 
+    delayInMinutes: 1, 
+    periodInMinutes: 60 * 24 // Daily cleanup
+  });
+});
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === 'cleanup-storage') {
+    const cleaned = await SecurityUtils.storage.cleanup();
+    console.log(`Storage cleanup completed. Removed ${cleaned} old entries.`);
+  }
+});
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
@@ -148,19 +192,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       if (msg.type === "SAVE_HISTORY") {
         const key = `history:${Date.now()}`;
-        await chrome.storage.local.set({ [key]: msg.data });
+        // Use temporary storage for history
+        await SecurityUtils.storage.setTemporary(key, msg.data);
         return sendResponse({ ok: true, key });
       }
 
       if (msg.type === "LIST_HISTORY_KEYS") {
-        const all = await chrome.storage.local.get(null);
+        const all = await chrome.storage.session.get(null);
         const keys = Object.keys(all).filter(k => k.startsWith("history:"));
         return sendResponse({ ok: true, keys: keys.sort().reverse().slice(0, 50) });
       }
 
       if (msg.type === "GET_HISTORY_ITEM") {
-        const obj = await chrome.storage.local.get(msg.key);
-        return sendResponse({ ok: true, item: obj[msg.key] || null });
+        const item = await SecurityUtils.storage.getTemporary(msg.key);
+        return sendResponse({ ok: true, item });
+      }
+
+      if (msg.type === "REQUEST_DOWNLOAD_PERMISSION") {
+        const hasPermission = await SecurityUtils.permissions.requestDownloadPermissions();
+        return sendResponse({ ok: true, granted: hasPermission });
+      }
+
+      if (msg.type === "CLEANUP_STORAGE") {
+        const cleaned = await SecurityUtils.storage.cleanup();
+        return sendResponse({ ok: true, cleaned });
       }
 
     } catch (e) {
